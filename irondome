@@ -1,0 +1,42 @@
+#!/goinfre/alvgomez/miniconda3/envs/42cyber-alvgomez/bin/python
+
+import argparse
+import os
+import daemon
+import time
+import daemon.pidfile
+import psutil
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Program that detects anomalous activity inside a critical zone")                 
+    parser.add_argument("args", nargs='*')
+    arg = parser.parse_args()
+    return arg
+
+def is_root_user():
+    return os.geteuid() == 0
+
+def monitoring():
+    i = 0
+    while True:
+        #with open("/var/log/irondome/irondome.log", 'a') as f:
+        with open("./irondome.log", 'a') as f:
+            if f.tell() != 0:
+                f.write('\n')
+            f.write(f"hola {i}")
+        i += 1
+        time.sleep(3)
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    #if is_root_user():
+    if len(args.args) > 0:
+        if os.path.isdir(args.args[0]):
+            monitoring()
+        else:
+            print("Path is not a directory")
+    else:
+        print("Usage: ./irondome <monitoring_path> <file_ext(opt)> ... &")
+    #else:
+    #    print("The program can only be executed by a root user")
+
