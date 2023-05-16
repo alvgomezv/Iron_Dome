@@ -4,8 +4,11 @@ import argparse
 import os
 import daemon
 import time
-import daemon.pidfile
-import psutil
+import logging
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import math
+import psutil 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Program that detects anomalous activity inside a critical zone")                 
@@ -16,23 +19,107 @@ def parse_arguments():
 def is_root_user():
     return os.geteuid() == 0
 
-def monitoring():
-    i = 0
+def calculate_entropy(file_path):
+    with open(file_path, 'rb') as file:
+        data = file.read()
+    byte_count = {}
+    total_bytes = len(data)
+    for byte in data:
+        if byte in byte_count:
+            byte_count[byte] += 1
+        else:
+            byte_count[byte] = 1
+    entropy = 0
+    for count in byte_count.values():
+        probability = count / total_bytes
+        entropy -= probability * math.log2(probability)
+    return entropy
+
+def entropy_changes(path, past_entropy):
+    files = os.listdir(path)
+    file_names = [file for file in files if os.path.isfile(os.path.join(path, file))]
+    if not past_entropy:
+        past_entropy = {}
+        for file_name in file_names:
+            past_entropy[file_name] = calculate_entropy(file_name)
+    for key, value in past_entropy.items():
+        if value != calculate_entropy(os.path.join(path, key)):
+            logging.info(f"Warrning! Entropy changes in: {key}")
+            past_entropy[key] = calculate_entropy(os.path.join(path, key))
+    return past_entropy
+
+def memory_usage():
+    memory_threshold_MB = 100
+    memory_threshold = memory_threshold_MB * 1024 * 1024
+
+    process = psutil.Process()
+    memory_usage = process.memory_info().rss
+    if memory_usage > memory_threshold:
+        logging.info(f"WARNING! Memory usage exeeded {memory_threshold_MB}MB, program stoped")
+        exit()
+
+class Events(FileSystemEventHandler):
+    def __init__(self, file_path, time_frame, max_mod, max_create, max_del):
+        super().__init__()
+        self.file_path = file_path
+        self.time_frame = time_frame
+        self.max_mod = max_mod
+        self.max_create = max_create
+        self.max_del = max_del
+        self.mod_counter = 0
+        self.create_counter = 0
+        self.del_counter = 0
+
+    def on_modified(self, event):
+        self.mod_counter += 1
+
+
+    def on_created(self, event):
+        self.create_counter += 1
+
+    def on_deleted(self, event):
+        self.del_counter += 1
+
+    def file_changes(self):
+        if self.mod_counter >= self.max_mod:
+            logging.info(f"Warrning! Modified files:  {self.mod_counter} times within {self.time_frame} seconds.")
+        if self.create_counter >= self.max_create:
+            logging.info(f"Warrning! Created files: {self.create_counter} times within {self.time_frame} seconds.")
+        if self.del_counter >= self.max_del:
+            logging.info(f"Warrning! Deleted files: {self.del_counter} times within {self.time_frame} seconds.")
+        self.mod_counter = 0 
+        self.create_counter = 0
+        self.del_counter = 0
+
+def monitoring(path):
+    #'/var/log/irondome/irondome.log'
+    logging.basicConfig(filename="./irondome.log",
+                        level=logging.INFO,
+                        format='%(asctime)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S')
+    
+    e_handler = Events(path, time_frame=5, max_mod=5, max_create=3, max_del=5)
+    observer = Observer()
+    observer.schedule(e_handler, path, recursive=True)
+    observer.start()
+    past_entropy = {}
+    #try:
     while True:
-        #with open("/var/log/irondome/irondome.log", 'a') as f:
-        with open("./irondome.log", 'a') as f:
-            if f.tell() != 0:
-                f.write('\n')
-            f.write(f"hola {i}")
-        i += 1
-        time.sleep(3)
+        timer = time.time()
+        while time.time() - timer < e_handler.time_frame:
+            memory_usage()
+        e_handler.file_changes()
+        past_entropy = entropy_changes(path, past_entropy)
+    #except:
+    #    observer.stop()
+    #observer.join()
 
 if __name__ == "__main__":
     args = parse_arguments()
     #if is_root_user():
     if len(args.args) > 0:
         if os.path.isdir(args.args[0]):
-            monitoring()
+            monitoring(args.args[0])
         else:
             print("Path is not a directory")
     else:
