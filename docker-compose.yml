@@ -2,6 +2,10 @@ version: '3'
 services:
   irondome:
     build:
-      context: .
       dockerfile: Dockerfile
     tty: true
+    ports:
+      - '2222:22'
+    volumes:
+      - ../Iron_dome:/irondome
+      - ../stockholm:/stockholm

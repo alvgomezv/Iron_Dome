@@ -1,0 +1,7 @@
+cffi==1.15.1
+cryptography==40.0.2
+libmagic==1.0
+pycparser==2.21
+pycrypto==2.6.1
+pyOpenSSL==23.1.1
+python-magic==0.4.27
