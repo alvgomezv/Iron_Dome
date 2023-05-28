@@ -1,7 +1,12 @@
 cffi==1.15.1
 cryptography==40.0.2
+docutils==0.20.1
 libmagic==1.0
+lockfile==0.12.2
+psutil==5.9.5
 pycparser==2.21
 pycrypto==2.6.1
 pyOpenSSL==23.1.1
+python-daemon==3.0.1
 python-magic==0.4.27
+watchdog==3.0.0

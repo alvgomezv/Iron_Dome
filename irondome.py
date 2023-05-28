@@ -1,5 +1,3 @@
-#!/irondome/env/bin/python3
-#!/goinfre/alvgomez/miniconda3/envs/42cyber-alvgomez/bin/python
 
 import argparse
 import os
@@ -13,6 +11,12 @@ from watchdog.events import FileSystemEventHandler
 import math
 import psutil 
 
+g_time_frame = 5    # Time frame in which counts the number of events
+g_max_mod = 15      # Max number of modifications
+g_max_create = 5    # Max number of creations
+g_max_del = 5       # Max number of deletions
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Program that detects anomalous activity inside a critical zone")                 
     parser.add_argument("args", nargs='*')
@@ -22,23 +26,43 @@ def parse_arguments():
 def is_root_user():
     return os.geteuid() == 0
 
-def magic_changes(path, ext, past_entropy):
+def cryptographic_processes():
+    crypto_processes = ["openssl", "gpg", "sha256sum", "md5sum"]
+    try:
+        running_processes = [proc.name() for proc in psutil.process_iter()]
+        for crypto_process in crypto_processes:
+            if crypto_process in running_processes:
+                logging.info(f"Cryptographic process '{crypto_process}' is being executed!")
+    except:
+        pass
+
+def disk_abuse():
+    disk_usage_threshold = 90  # 90% disk usage threshold
+    read_ops_threshold = 1000  # Number of read operations threshold
+    write_ops_threshold = 1000 # Number of write operations threshold
+
+    disk_usage = psutil.disk_usage('/')
+    if disk_usage.percent > disk_usage_threshold:
+        logging.info("DANGER! Disk read abuse, high disk usage detected!")
+    disk_io = psutil.disk_io_counters(perdisk=True)['sda']
+    if disk_io.read_count > read_ops_threshold or disk_io.write_count > write_ops_threshold:
+        logging.info("DANGER! Disk read abuse, abnormal disk I/O activity detected!")
+
+def magic_changes(path, ext, past_magic):
+    file_magic = magic.Magic()
     files = os.listdir(path)
     file_paths = [os.path.join(path, file) for file in files if os.path.isfile(os.path.join(path, file))]
     if ext is not None:
         file_paths = [file for file in file_paths if os.path.splitext(file)[1] in ext]
-    if not past_entropy:
-        past_entropy = {}
-        for file_path in file_paths:
-            if os.path.exists(file_path):
-                past_entropy[file_path] = calculate_entropy(file_path)
-    for key, value in past_entropy.items():
+    new_magic = {}
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            new_magic[file_path] = file_magic.from_file(file_path)
+    for key, value in past_magic.items():
         if os.path.exists(os.path.join(path, key)):
-            if value != calculate_entropy(os.path.join(path, key)):
-                logging.info(f"Warrning! Entropy changes in: {key}")
-                past_entropy[key] = calculate_entropy(os.path.join(path, key))
-    print(past_entropy)
-    return past_entropy
+            if value != new_magic[key]:
+                logging.info(f"Warning! Magic changes in: {key}")
+    return new_magic
 
 def calculate_entropy(file_path):
     with open(file_path, 'rb') as file:
@@ -61,18 +85,15 @@ def entropy_changes(path, ext, past_entropy):
     file_paths = [os.path.join(path, file) for file in files if os.path.isfile(os.path.join(path, file))]
     if ext is not None:
         file_paths = [file for file in file_paths if os.path.splitext(file)[1] in ext]
-    if not past_entropy:
-        past_entropy = {}
-        for file_path in file_paths:
-            if os.path.exists(file_path):
-                past_entropy[file_path] = calculate_entropy(file_path)
+    new_entropy = {}
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            new_entropy[file_path] = calculate_entropy(file_path)
     for key, value in past_entropy.items():
         if os.path.exists(os.path.join(path, key)):
-            if value != calculate_entropy(os.path.join(path, key)):
-                logging.info(f"Warrning! Entropy changes in: {key}")
-                past_entropy[key] = calculate_entropy(os.path.join(path, key))
-    print(past_entropy)
-    return past_entropy
+            if value != new_entropy[key]:
+                logging.info(f"Warning! Entropy changes in: {key}")
+    return new_entropy
 
 def memory_usage():
     memory_threshold_MB = 100
@@ -81,7 +102,7 @@ def memory_usage():
     process = psutil.Process()
     memory_usage = process.memory_info().rss
     if memory_usage > memory_threshold:
-        logging.info(f"WARNING! Memory usage exeeded {memory_threshold_MB}MB, program stoped")
+        logging.info(f"DANGER! Memory usage exeeded {memory_threshold_MB} MB, program stoped")
         exit()
 
 class Events(FileSystemEventHandler):
@@ -120,38 +141,40 @@ class Events(FileSystemEventHandler):
 
     def file_changes(self):
         if self.mod_counter >= self.max_mod:
-            logging.info(f"Warrning! Modified files:  {self.mod_counter} times within {self.time_frame} seconds.")
+            logging.info(f"Warning! Modified files:  {self.mod_counter} times within {self.time_frame} seconds.")
         if self.create_counter >= self.max_create:
-            logging.info(f"Warrning! Created files: {self.create_counter} times within {self.time_frame} seconds.")
+            logging.info(f"Warning! Created files: {self.create_counter} times within {self.time_frame} seconds.")
         if self.del_counter >= self.max_del:
-            logging.info(f"Warrning! Deleted files: {self.del_counter} times within {self.time_frame} seconds.")
+            logging.info(f"Warning! Deleted files: {self.del_counter} times within {self.time_frame} seconds.")
         self.mod_counter = 0 
         self.create_counter = 0
         self.del_counter = 0
 
 def monitoring(path, ext=None):
     with daemon.DaemonContext():
-        #'/var/log/irondome/irondome.log'
         logging.basicConfig(filename="/var/log/irondome/irondome.log",
                             level=logging.INFO,
                             format='%(asctime)s - %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
-        e_handler = Events(path, ext, time_frame=5, max_mod=5, max_create=3, max_del=5)
+        e_handler = Events(path, ext, g_time_frame, g_max_mod, g_max_create, g_max_del)
         observer = Observer()
         observer.schedule(e_handler, path, recursive=True)
         observer.start()
         past_entropy = {}
-        #try:
+        past_magic = {}
         while True:
-            timer = time.time()
-            while (time.time() - timer) < e_handler.time_frame:
-                memory_usage()
-            e_handler.file_changes()
-            past_entropy = entropy_changes(path, ext, past_entropy)
-        #except:
-        #    observer.stop()
+            try:
+                timer = time.time()
+                while (time.time() - timer) < e_handler.time_frame:
+                    memory_usage()
+                    past_entropy = entropy_changes(path, ext, past_entropy)
+                    cryptographic_processes()
+                e_handler.file_changes()
+                past_magic = magic_changes(path, ext, past_magic)
+            except:
+                pass
+        #observer.stop()
         #observer.join()
-
 
 if __name__ == "__main__":
     args = parse_arguments()
