@@ -9,13 +9,12 @@ import magic
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import math
-import psutil 
+import psutil
 
 g_time_frame = 5    # Time frame in which counts the number of events
-g_max_mod = 15      # Max number of modifications
+g_max_mod = 20     # Max number of modifications
 g_max_create = 5    # Max number of creations
 g_max_del = 5       # Max number of deletions
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Program that detects anomalous activity inside a critical zone")                 
@@ -32,21 +31,28 @@ def cryptographic_processes():
         running_processes = [proc.name() for proc in psutil.process_iter()]
         for crypto_process in crypto_processes:
             if crypto_process in running_processes:
-                logging.info(f"Cryptographic process '{crypto_process}' is being executed!")
+                logging.info(f"Warning! Cryptographic process '{crypto_process}' is being executed!")
     except:
         pass
 
-def disk_abuse():
-    disk_usage_threshold = 90  # 90% disk usage threshold
-    read_ops_threshold = 1000  # Number of read operations threshold
-    write_ops_threshold = 1000 # Number of write operations threshold
+def disk_abuse(past_disk_read, past_disk_write):
+    disk_usage_threshold = 30  # 30% disk usage threshold
+    read_ops_threshold = 20  # Number of read operations threshold
+    write_ops_threshold = 20 # Number of write operations threshold
 
     disk_usage = psutil.disk_usage('/')
     if disk_usage.percent > disk_usage_threshold:
         logging.info("DANGER! Disk read abuse, high disk usage detected!")
-    disk_io = psutil.disk_io_counters(perdisk=True)['sda']
-    if disk_io.read_count > read_ops_threshold or disk_io.write_count > write_ops_threshold:
+    disk_io = psutil.disk_io_counters(perdisk=True)
+
+    # Here you select the disk (vda)
+    new_disk_read = disk_io['vda'].read_count
+    new_disk_write = disk_io['vda'].write_count
+    if (new_disk_read - past_disk_read) > read_ops_threshold:
         logging.info("DANGER! Disk read abuse, abnormal disk I/O activity detected!")
+    if (new_disk_write - past_disk_write) > write_ops_threshold:
+        logging.info("DANGER! Disk write abuse, abnormal disk I/O activity detected!")
+    return new_disk_read, new_disk_write
 
 def magic_changes(path, ext, past_magic):
     file_magic = magic.Magic()
@@ -98,7 +104,6 @@ def entropy_changes(path, ext, past_entropy):
 def memory_usage():
     memory_threshold_MB = 100
     memory_threshold = memory_threshold_MB * 1024 * 1024
-
     process = psutil.Process()
     memory_usage = process.memory_info().rss
     if memory_usage > memory_threshold:
@@ -162,19 +167,20 @@ def monitoring(path, ext=None):
         observer.start()
         past_entropy = {}
         past_magic = {}
+        past_disk_read = psutil.disk_io_counters(perdisk=True)['vda'].read_count
+        past_disk_write = psutil.disk_io_counters(perdisk=True)['vda'].write_count
         while True:
             try:
                 timer = time.time()
                 while (time.time() - timer) < e_handler.time_frame:
                     memory_usage()
                     past_entropy = entropy_changes(path, ext, past_entropy)
+                    past_magic = magic_changes(path, ext, past_magic)
                     cryptographic_processes()
                 e_handler.file_changes()
-                past_magic = magic_changes(path, ext, past_magic)
+                past_disk_read, past_disk_write = disk_abuse(past_disk_read, past_disk_write)
             except:
-                pass
-        #observer.stop()
-        #observer.join()
+                continue
 
 if __name__ == "__main__":
     args = parse_arguments()
